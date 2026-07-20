@@ -1,11 +1,15 @@
-# Examples
+<img width="1655" height="863" alt="Screenshot 2026-07-07 at 10 48 04 AM" src="https://github.com/user-attachments/assets/9f2ada90-247a-42ae-bddf-531a27571004" />
+This screenshot captures an important comparison between the ES and NQ versions of the model during the same broader market environment. On the left, the ES indicator remains in a `Scanning` state even though the dashboard reflects bearish higher-timeframe context, negative Z-score positioning, and below-value price location. On the right, the NQ indicator fully compiles into a `SELL A+` setup with strong alignment across signal strength, bearish volume, and internal condition count.
 
-Add screenshots here with short notes explaining:
+This example is useful because it exposes one of the key research themes in the project: **cross-instrument sensitivity differences**. NQ tends to move with more displacement and stronger short-term expansion, which allows the signal model to compile more easily under the same logic. ES, by contrast, often requires more structure-sensitive and less expansion-dependent thresholds. This chart helped identify that the ES model could under-trigger even when the broader directional read was correct.
+<img width="3691" height="923" alt="Screenshot 2026-05-08 at 5 12 03 PM" src="https://github.com/user-attachments/assets/550e6824-d3b9-4223-8274-71e294ee243f" />
+This example shows the indicator during replay testing, where both ES and NQ are moving in a constructive bullish structure after a major reversal and continuation phase. The ES chart on the left shows a `BUY A+` setup forming after the market reclaims structure and begins trending above intermediate support, while NQ on the right reflects a similar directional continuation with cleaner upward momentum.
 
-- the higher-timeframe bias
-- the lower-timeframe setup
-- whether the signal was early, late, or ideal
-- whether the trade matched the session narrative
-- what revision idea came from the example
+This screenshot is valuable because it demonstrates how the model performs in a favorable trend environment where higher-timeframe bias, quantile structure, and local execution conditions align well. It also shows how replay testing is used as part of the development workflow to validate whether signals are appearing in places that make structural sense, rather than simply reacting after the move is already complete.
 
-This folder should become the visual evidence section of the project.
+<img width="1928" height="920" alt="Screenshot 2026-05-21 at 7 50 14 PM" src="https://github.com/user-attachments/assets/929d9d1c-32c2-4b8e-b7d6-2739cc8ba46d" />
+This screenshot shows a live ES trade example where the model identified a `BUY A+` setup on the lower timeframe after the higher-timeframe structure remained supportive. The chart includes the entry, projected take-profit levels, and active bias state, while the position panel confirms that the trade was executed and managed in real time.
+
+This is one of the most useful examples in the repository because it connects the indicator’s logic directly to actual execution. The setup reflects the project’s intended workflow: identify directional context on the higher timeframe, wait for local confirmation on the lower timeframe, and then use the model’s structure to guide entry and risk management. The chart also demonstrates how the dashboard, bias label, and target mapping work together to create a more structured execution process.
+
+The primary lesson from this example is that the project is not only theoretical. It is meant to function as a practical market-reading framework that can support real decision-making under live conditions. For portfolio purposes, this example helps demonstrate the connection between signal design, trade planning, and execution discipline.
