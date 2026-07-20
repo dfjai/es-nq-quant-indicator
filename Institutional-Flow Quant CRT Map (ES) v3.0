@@ -1,0 +1,454 @@
+/@version=5
+indicator("ES Main Flow Bias Map v1.4", "ES Main Bias", overlay=true, max_lines_count=120, max_labels_count=120)
+
+tz = "America/New_York"
+
+// Visuals
+showDashboard = input.bool(true, "Show Compact Dashboard", group="Visuals")
+showBiasLabel = input.bool(true, "Show Bias Label", group="Visuals")
+showSetupLabels = input.bool(true, "Show Setup Labels", group="Visuals")
+showEntryStop = input.bool(true, "Show Entry / Stop", group="Visuals")
+showVWAP = input.bool(true, "Show VWAP", group="Visuals")
+showEMAs = input.bool(true, "Show 50 / 200 EMA", group="Visuals")
+showQuantile = input.bool(true, "Show Quantile Bands", group="Visuals")
+biasLabelOffsetBars = input.int(6, "Bias Label Offset Bars", minval=1, maxval=30, group="Visuals")
+
+// Sessions
+asiaSession = input.session("1800-0000", "Asia Session (ET)", group="Sessions")
+euSession = input.session("0300-0830", "EU Session (ET)", group="Sessions")
+nySession = input.session("0930-1600", "NY Session (ET)", group="Sessions")
+
+// Bias engine
+ema200Length = input.int(200, "200 EMA Length", minval=20, maxval=400, group="Bias Engine")
+ema50Length = input.int(50, "50 EMA Length", minval=10, maxval=200, group="Bias Engine")
+macroBiasThreshold = input.float(0.55, "Macro Probability Threshold", minval=0.50, maxval=0.90, step=0.01, group="Bias Engine")
+activeBiasThreshold = input.float(0.55, "Active Probability Threshold", minval=0.50, maxval=0.95, step=0.01, group="Bias Engine")
+flipMargin = input.float(0.06, "Bias Flip Margin", minval=0.01, maxval=0.50, step=0.01, group="Bias Engine")
+
+// Orderflow / volume
+dailyVolumeLookback = input.int(20, "Daily Volume Lookback", minval=5, maxval=100, group="Orderflow Engine")
+intradayVolumeLookback = input.int(20, "Intraday Volume Lookback", minval=5, maxval=100, group="Orderflow Engine")
+fourHourVolumeLookback = input.int(20, "4H Volume Lookback", minval=5, maxval=100, group="Orderflow Engine")
+dailyVolumeFactor = input.float(1.03, "Daily Volume Participation", minval=0.5, maxval=4.0, step=0.05, group="Orderflow Engine")
+intradayVolumeFactor = input.float(1.05, "Intraday Volume Expansion", minval=0.5, maxval=4.0, step=0.05, group="Orderflow Engine")
+fourHourVolumeFactor = input.float(1.03, "4H Volume Participation", minval=0.5, maxval=4.0, step=0.05, group="Orderflow Engine")
+closeLocationThreshold = input.float(0.56, "Close Strength Threshold", minval=0.4, maxval=0.95, step=0.05, group="Orderflow Engine")
+
+// Quantile
+regressionLookback = input.int(48, "Regression Lookback", minval=10, maxval=200, group="Quantile Engine")
+outerBandMultiplier = input.float(1.45, "Outer Band Multiplier", minval=0.5, maxval=5.0, step=0.05, group="Quantile Engine")
+tailRiskMultiplier = input.float(1.08, "Tail Risk Sensitivity", minval=0.5, maxval=3.0, step=0.05, group="Quantile Engine")
+
+// Execution
+atrLength = input.int(14, "ATR Length", minval=5, maxval=100, group="Execution Engine")
+swingLookback = input.int(5, "Swing Lookback", minval=2, maxval=30, group="Execution Engine")
+stopAtrBuffer = input.float(0.28, "Stop Buffer ATR", minval=0.0, maxval=3.0, step=0.05, group="Execution Engine")
+setupMaxBars = input.int(18, "Setup Max Bars", minval=3, maxval=100, group="Execution Engine")
+tp1AtrFactor = input.float(0.18, "TP1 4H ATR Factor", minval=0.05, maxval=1.50, step=0.01, group="Execution Engine")
+tp2AtrFactor = input.float(0.32, "TP2 4H ATR Factor", minval=0.05, maxval=2.00, step=0.01, group="Execution Engine")
+tp3AtrFactor = input.float(0.50, "TP3 4H ATR Factor", minval=0.05, maxval=3.00, step=0.01, group="Execution Engine")
+quantileTargetBufferAtr = input.float(0.10, "Quantile Target Buffer ATR", minval=0.0, maxval=1.0, step=0.01, group="Execution Engine")
+
+// ES-specific tuning
+atrPresetMult = 0.92
+volPresetMult = 1.00
+bandPresetMult = 0.92
+
+// Timeframes
+chartTfSeconds = timeframe.in_seconds()
+supportedTf = chartTfSeconds == 300 or chartTfSeconds == 900 or chartTfSeconds == 3600 or chartTfSeconds == 14400
+
+// Symbol check
+isEsFamily = syminfo.root == "ES" or syminfo.root == "MES"
+
+// Sessions
+inAsia = not na(time(timeframe.period, asiaSession, tz))
+inEu = not na(time(timeframe.period, euSession, tz))
+inNy = not na(time(timeframe.period, nySession, tz))
+sessionActive = inAsia or inEu or inNy
+sessionStatus = inNy ? "NY Session" : inEu ? "EU Session" : inAsia ? "Asia Session" : "Out of Session"
+
+// Core chart values
+atr = ta.atr(atrLength) * atrPresetMult
+vwapValue = ta.vwap(hlc3)
+ema200 = ta.ema(close, ema200Length)
+ema50 = ta.ema(close, ema50Length)
+barRange = math.max(high - low, syminfo.mintick)
+closeLocation = (close - low) / barRange
+candleBody = math.abs(close - open)
+intradayVolumeAvg = ta.sma(volume, intradayVolumeLookback)
+
+// Higher timeframe values
+dailyClose = request.security(syminfo.tickerid, "D", close)
+dailyOpen = request.security(syminfo.tickerid, "D", open)
+dailyHighPrev = request.security(syminfo.tickerid, "D", high[1])
+dailyLowPrev = request.security(syminfo.tickerid, "D", low[1])
+dailyEma200 = request.security(syminfo.tickerid, "D", ta.ema(close, ema200Length))
+dailyEma50 = request.security(syminfo.tickerid, "D", ta.ema(close, ema50Length))
+dailyVolume = request.security(syminfo.tickerid, "D", volume)
+dailyVolumeAvg = request.security(syminfo.tickerid, "D", ta.sma(volume, dailyVolumeLookback))
+
+fourHourClose = request.security(syminfo.tickerid, "240", close)
+fourHourOpen = request.security(syminfo.tickerid, "240", open)
+fourHourHigh = request.security(syminfo.tickerid, "240", high)
+fourHourLow = request.security(syminfo.tickerid, "240", low)
+fourHourClosePrev = request.security(syminfo.tickerid, "240", close[1])
+fourHourOpenPrev = request.security(syminfo.tickerid, "240", open[1])
+fourHourHighPrev = request.security(syminfo.tickerid, "240", high[1])
+fourHourLowPrev = request.security(syminfo.tickerid, "240", low[1])
+fourHourVolume = request.security(syminfo.tickerid, "240", volume)
+fourHourVolumeAvg = request.security(syminfo.tickerid, "240", ta.sma(volume, fourHourVolumeLookback))
+fourHourEma200 = request.security(syminfo.tickerid, "240", ta.ema(close, ema200Length))
+fourHourEma50 = request.security(syminfo.tickerid, "240", ta.ema(close, ema50Length))
+fourHourEma50Prev = request.security(syminfo.tickerid, "240", ta.ema(close, ema50Length)[1])
+fourHourAtr = request.security(syminfo.tickerid, "240", ta.atr(atrLength)) * atrPresetMult
+
+hourlyClose = request.security(syminfo.tickerid, "60", close)
+hourlyHigh = request.security(syminfo.tickerid, "60", high)
+hourlyLow = request.security(syminfo.tickerid, "60", low)
+hourlyEma200 = request.security(syminfo.tickerid, "60", ta.ema(close, ema200Length))
+hourlyEma50 = request.security(syminfo.tickerid, "60", ta.ema(close, ema50Length))
+
+// Chart quantile layer
+regMid = ta.linreg(close, regressionLookback, 0)
+regPrev = ta.linreg(close, regressionLookback, 1)
+residual = close - regMid
+residualStdev = ta.stdev(residual, regressionLookback) * bandPresetMult
+outerBand = residualStdev * outerBandMultiplier
+quantileUpper = regMid + outerBand * tailRiskMultiplier
+quantileLower = regMid - outerBand * tailRiskMultiplier
+quantileSlopeUp = regMid > regPrev
+quantileSlopeDown = regMid < regPrev
+tailRiskHigh = high >= quantileUpper
+tailRiskLow = low <= quantileLower
+
+// 4H quantile layer
+fourHourRegMid = request.security(syminfo.tickerid, "240", ta.linreg(close, regressionLookback, 0))
+fourHourRegPrev = request.security(syminfo.tickerid, "240", ta.linreg(close, regressionLookback, 1))
+fourHourResidualStdev = request.security(syminfo.tickerid, "240", ta.stdev(close - ta.linreg(close, regressionLookback, 0), regressionLookback)) * bandPresetMult
+fourHourOuterBand = fourHourResidualStdev * outerBandMultiplier
+fourHourQuantileUpper = fourHourRegMid + fourHourOuterBand * tailRiskMultiplier
+fourHourQuantileLower = fourHourRegMid - fourHourOuterBand * tailRiskMultiplier
+fourHourQuantileSlopeUp = fourHourRegMid > fourHourRegPrev
+fourHourQuantileSlopeDown = fourHourRegMid < fourHourRegPrev
+fourHourTailRiskHigh = fourHourHigh >= fourHourQuantileUpper
+fourHourTailRiskLow = fourHourLow <= fourHourQuantileLower
+quantileStatus = fourHourQuantileSlopeUp ? "Uptrend Band" : fourHourQuantileSlopeDown ? "Downtrend Band" : "Flat"
+
+// Volume / pressure
+dailyVolumeParticipation = dailyVolume > nz(dailyVolumeAvg, dailyVolume) * dailyVolumeFactor * volPresetMult
+fourHourVolumeParticipation = fourHourVolume > nz(fourHourVolumeAvg, fourHourVolume) * fourHourVolumeFactor * volPresetMult
+intradayVolumeExpansion = volume > nz(intradayVolumeAvg, volume) * intradayVolumeFactor * volPresetMult
+
+buyPressure = close > open and closeLocation >= closeLocationThreshold and candleBody > atr * 0.10 and intradayVolumeExpansion
+sellPressure = close < open and closeLocation <= (1.0 - closeLocationThreshold) and candleBody > atr * 0.10 and intradayVolumeExpansion
+
+softBuyPressure = buyPressure or (close > vwapValue and close > ema50 and closeLocation > 0.52)
+softSellPressure = sellPressure or (close < vwapValue and close < ema50 and closeLocation < 0.48)
+
+pressureStatus = buyPressure ? "Buy Pressure" : sellPressure ? "Sell Pressure" : "Balanced"
+
+// Structure states
+dailyBull = dailyClose > dailyEma200 and dailyClose > dailyEma50 and dailyEma50 > dailyEma200
+dailyBear = dailyClose < dailyEma200 and dailyClose < dailyEma50 and dailyEma50 < dailyEma200
+fourHourBull = fourHourClose > fourHourEma200 and fourHourClose > fourHourEma50 and fourHourEma50 > fourHourEma200
+fourHourBear = fourHourClose < fourHourEma200 and fourHourClose < fourHourEma50 and fourHourEma50 < fourHourEma200
+hourlyBull = hourlyClose > hourlyEma50 and hourlyEma50 > hourlyEma200
+hourlyBear = hourlyClose < hourlyEma50 and hourlyEma50 < hourlyEma200
+
+// Macro probability
+macroBullRaw = 0.0
+macroBullRaw += dailyBull ? 1.4 : 0.0
+macroBullRaw += fourHourBull ? 1.1 : 0.0
+macroBullRaw += dailyVolumeParticipation and dailyClose > dailyOpen ? 0.4 : 0.0
+macroBullRaw += fourHourQuantileSlopeUp ? 0.3 : 0.0
+
+macroBearRaw = 0.0
+macroBearRaw += dailyBear ? 1.4 : 0.0
+macroBearRaw += fourHourBear ? 1.1 : 0.0
+macroBearRaw += dailyVolumeParticipation and dailyClose < dailyOpen ? 0.4 : 0.0
+macroBearRaw += fourHourQuantileSlopeDown ? 0.3 : 0.0
+
+macroBullProb = 1.0 / (1.0 + math.exp(-(macroBullRaw - macroBearRaw)))
+macroBearProb = 1.0 - macroBullProb
+macroBias = macroBullProb >= macroBiasThreshold ? "Bullish" : macroBearProb >= macroBiasThreshold ? "Bearish" : "Neutral"
+
+// 4H close quality / flip logic
+fourHourCloseLocation = (fourHourClose - fourHourLow) / math.max(fourHourHigh - fourHourLow, syminfo.mintick)
+fourHourWeakClose = fourHourCloseLocation < 0.35
+fourHourStrongClose = fourHourCloseLocation > 0.65
+fourHourEmaSlopeUp = fourHourEma50 > fourHourEma50Prev
+fourHourEmaSlopeDown = fourHourEma50 < fourHourEma50Prev
+
+fourHourBullCandle = fourHourClose > fourHourOpen
+fourHourBearCandle = fourHourClose < fourHourOpen
+fourHourBullCandlePrev = fourHourClosePrev > fourHourOpenPrev
+fourHourBearCandlePrev = fourHourClosePrev < fourHourOpenPrev
+
+fourHourFailedExpansionBear = fourHourTailRiskHigh and fourHourClose < fourHourRegMid and fourHourWeakClose
+fourHourFailedExpansionBull = fourHourTailRiskLow and fourHourClose > fourHourRegMid and fourHourStrongClose
+
+fourHourTwoBarBearReversal = fourHourBearCandle and fourHourBearCandlePrev and fourHourClose < fourHourClosePrev
+fourHourTwoBarBullReversal = fourHourBullCandle and fourHourBullCandlePrev and fourHourClose > fourHourClosePrev
+
+fourHourLost50AfterRun = fourHourClose < fourHourEma50 and fourHourClosePrev >= fourHourEma50Prev
+fourHourReclaimed50AfterFlush = fourHourClose > fourHourEma50 and fourHourClosePrev <= fourHourEma50Prev
+
+// Continuation failure logic
+fourHourImpulseMid = (fourHourHighPrev + fourHourLowPrev) * 0.5
+failedBullContinuation = fourHourClose < fourHourImpulseMid and fourHourClose < fourHourClosePrev and fourHourClose < fourHourOpen
+failedBearContinuation = fourHourClose > fourHourImpulseMid and fourHourClose > fourHourClosePrev and fourHourClose > fourHourOpen
+
+hourlyInsidePriorRange = hourlyHigh <= fourHourHighPrev and hourlyLow >= fourHourLowPrev
+acceptedBackIntoPriorRangeBear = fourHourClose < fourHourHighPrev and fourHourClose > fourHourLowPrev and fourHourClose < fourHourImpulseMid
+acceptedBackIntoPriorRangeBull = fourHourClose > fourHourLowPrev and fourHourClose < fourHourHighPrev and fourHourClose > fourHourImpulseMid
+
+// Active probability
+activeBullRaw = 0.0
+activeBullRaw += fourHourClose > fourHourEma50 ? 1.0 : 0.0
+activeBullRaw += fourHourClose > fourHourEma200 ? 0.8 : 0.0
+activeBullRaw += fourHourEmaSlopeUp ? 0.6 : 0.0
+activeBullRaw += fourHourQuantileSlopeUp ? 0.7 : 0.0
+activeBullRaw += fourHourStrongClose ? 0.5 : 0.0
+activeBullRaw += fourHourVolumeParticipation and fourHourBullCandle ? 0.5 : 0.0
+activeBullRaw += close > vwapValue ? 0.3 : 0.0
+activeBullRaw += fourHourFailedExpansionBull ? 0.7 : 0.0
+activeBullRaw += fourHourReclaimed50AfterFlush ? 0.6 : 0.0
+activeBullRaw += failedBearContinuation ? 0.3 : 0.0
+
+activeBearRaw = 0.0
+activeBearRaw += fourHourClose < fourHourEma50 ? 1.0 : 0.0
+activeBearRaw += fourHourClose < fourHourEma200 ? 0.8 : 0.0
+activeBearRaw += fourHourEmaSlopeDown ? 0.6 : 0.0
+activeBearRaw += fourHourQuantileSlopeDown ? 0.7 : 0.0
+activeBearRaw += fourHourWeakClose ? 0.5 : 0.0
+activeBearRaw += fourHourVolumeParticipation and fourHourBearCandle ? 0.5 : 0.0
+activeBearRaw += close < vwapValue ? 0.3 : 0.0
+activeBearRaw += fourHourFailedExpansionBear ? 0.9 : 0.0
+activeBearRaw += fourHourLost50AfterRun ? 0.7 : 0.0
+activeBearRaw += fourHourTwoBarBearReversal ? 0.8 : 0.0
+activeBearRaw += failedBullContinuation ? 0.8 : 0.0
+activeBearRaw += acceptedBackIntoPriorRangeBear ? 0.5 : 0.0
+activeBearRaw += hourlyInsidePriorRange and acceptedBackIntoPriorRangeBear ? 0.3 : 0.0
+
+activeBullRaw += fourHourTwoBarBullReversal ? 0.8 : 0.0
+activeBullRaw += acceptedBackIntoPriorRangeBull ? 0.4 : 0.0
+
+bearishOverride = (fourHourFailedExpansionBear and fourHourLost50AfterRun) or (fourHourQuantileSlopeDown and fourHourEmaSlopeDown and fourHourWeakClose) or (fourHourTwoBarBearReversal and close < vwapValue)
+bullishOverride = (fourHourFailedExpansionBull and fourHourReclaimed50AfterFlush) or (fourHourQuantileSlopeUp and fourHourEmaSlopeUp and fourHourStrongClose) or (fourHourTwoBarBullReversal and close > vwapValue)
+
+activeBearRaw += bearishOverride ? 0.9 : 0.0
+activeBullRaw += bullishOverride ? 0.9 : 0.0
+
+activeBullProb = 1.0 / (1.0 + math.exp(-(activeBullRaw - activeBearRaw)))
+activeBearProb = 1.0 - activeBullProb
+
+activeBias = activeBullProb >= activeBiasThreshold and activeBullProb - activeBearProb > flipMargin ? "Bullish" : activeBearProb >= activeBiasThreshold and activeBearProb - activeBullProb > flipMargin ? "Bearish" : "Neutral / Bias Weakening"
+biasColor = activeBias == "Bullish" ? color.rgb(36, 164, 90) : activeBias == "Bearish" ? color.rgb(204, 73, 73) : color.rgb(150, 130, 80)
+
+// Entry timing
+bullReclaim = (low < ema50 and close > ema50) or (low < vwapValue and close > vwapValue) or (low < dailyLowPrev and close > dailyLowPrev) or (tailRiskLow and close > regMid)
+bearReject = (high > ema50 and close < ema50) or (high > vwapValue and close < vwapValue) or (high > dailyHighPrev and close < dailyHighPrev) or (tailRiskHigh and close < regMid)
+
+notStretchedLong = close < quantileUpper and not tailRiskHigh
+notStretchedShort = close > quantileLower and not tailRiskLow
+
+bullBlocked = bearishOverride and failedBullContinuation
+bearBlocked = bullishOverride and failedBearContinuation
+
+earlyBull = isEsFamily and supportedTf and sessionActive and activeBias == "Bullish" and hourlyBull and bullReclaim and softBuyPressure and notStretchedLong and not bullBlocked
+earlyBear = isEsFamily and supportedTf and sessionActive and activeBias == "Bearish" and hourlyBear and bearReject and softSellPressure and notStretchedShort and not bearBlocked
+
+aPlusBull = earlyBull and activeBullProb > 0.62
+aPlusBear = earlyBear and activeBearProb > 0.62
+
+buyReady = earlyBull or aPlusBull
+sellReady = earlyBear or aPlusBear
+
+// Active setup storage with refresh logic
+var float activeEntry = na
+var float activeStop = na
+var float activeTp1 = na
+var float activeTp2 = na
+var float activeTp3 = na
+var string activeSide = ""
+var int activeSetupBar = na
+
+barsSinceSetup = na(activeSetupBar) ? na : bar_index - activeSetupBar
+
+buyInvalidated = str.contains(activeSide, "BUY") and (activeBias != "Bullish" or close < vwapValue and close < ema50 or not na(barsSinceSetup) and barsSinceSetup > setupMaxBars)
+sellInvalidated = str.contains(activeSide, "SELL") and (activeBias != "Bearish" or close > vwapValue and close > ema50 or not na(barsSinceSetup) and barsSinceSetup > setupMaxBars)
+
+if ta.change(time("D")) != 0
+    activeEntry := na
+    activeStop := na
+    activeTp1 := na
+    activeTp2 := na
+    activeTp3 := na
+    activeSide := ""
+    activeSetupBar := na
+
+if buyInvalidated or sellInvalidated
+    activeEntry := na
+    activeStop := na
+    activeTp1 := na
+    activeTp2 := na
+    activeTp3 := na
+    activeSide := ""
+    activeSetupBar := na
+
+volumeBoost = intradayVolumeExpansion ? 1.10 : 1.00
+
+if buyReady and (activeSide == "" or str.contains(activeSide, "SELL") or buyInvalidated)
+    longStop = math.min(ta.lowest(low, swingLookback), quantileLower) - atr * stopAtrBuffer
+    longRisk = close - longStop
+    longAtrTarget1 = close + fourHourAtr * tp1AtrFactor * volumeBoost
+    longAtrTarget2 = close + fourHourAtr * tp2AtrFactor * volumeBoost
+    longAtrTarget3 = close + fourHourAtr * tp3AtrFactor * volumeBoost
+    longQuantileCap1 = quantileUpper
+    longQuantileCap2 = quantileUpper + atr * quantileTargetBufferAtr
+    longQuantileCap3 = quantileUpper + atr * quantileTargetBufferAtr * 2.0
+    if longRisk > syminfo.mintick
+        activeSide := aPlusBull ? "BUY A+" : "BUY EARLY"
+        activeEntry := close
+        activeStop := longStop
+        activeTp1 := math.min(longAtrTarget1, longQuantileCap1)
+        activeTp2 := math.min(longAtrTarget2, longQuantileCap2)
+        activeTp3 := math.min(longAtrTarget3, longQuantileCap3)
+        activeSetupBar := bar_index
+
+if sellReady and (activeSide == "" or str.contains(activeSide, "BUY") or sellInvalidated)
+    shortStop = math.max(ta.highest(high, swingLookback), quantileUpper) + atr * stopAtrBuffer
+    shortRisk = shortStop - close
+    shortAtrTarget1 = close - fourHourAtr * tp1AtrFactor * volumeBoost
+    shortAtrTarget2 = close - fourHourAtr * tp2AtrFactor * volumeBoost
+    shortAtrTarget3 = close - fourHourAtr * tp3AtrFactor * volumeBoost
+    shortQuantileCap1 = quantileLower
+    shortQuantileCap2 = quantileLower - atr * quantileTargetBufferAtr
+    shortQuantileCap3 = quantileLower - atr * quantileTargetBufferAtr * 2.0
+    if shortRisk > syminfo.mintick
+        activeSide := aPlusBear ? "SELL A+" : "SELL EARLY"
+        activeEntry := close
+        activeStop := shortStop
+        activeTp1 := math.max(shortAtrTarget1, shortQuantileCap1)
+        activeTp2 := math.max(shortAtrTarget2, shortQuantileCap2)
+        activeTp3 := math.max(shortAtrTarget3, shortQuantileCap3)
+        activeSetupBar := bar_index
+
+if str.contains(activeSide, "BUY") and low <= activeStop
+    activeEntry := na
+    activeStop := na
+    activeTp1 := na
+    activeTp2 := na
+    activeTp3 := na
+    activeSide := ""
+    activeSetupBar := na
+
+if str.contains(activeSide, "SELL") and high >= activeStop
+    activeEntry := na
+    activeStop := na
+    activeTp1 := na
+    activeTp2 := na
+    activeTp3 := na
+    activeSide := ""
+    activeSetupBar := na
+
+standAside = not isEsFamily or not supportedTf or not sessionActive or activeBias == "Neutral / Bias Weakening" or (not buyReady and not sellReady and activeSide == "")
+setupStatus = activeSide != "" ? activeSide : not isEsFamily ? "Use on ES/MES" : standAside ? "Stand Aside" : activeBias == "Bullish" ? "Wait Bull" : activeBias == "Bearish" ? "Wait Bear" : "Weakening"
+
+// Dashboard helpers
+confidencePct = math.round(math.max(activeBullProb, activeBearProb) * 100.0)
+fourHourZ = fourHourResidualStdev > syminfo.mintick ? (fourHourClose - fourHourRegMid) / fourHourResidualStdev : 0.0
+chartZ = residualStdev > syminfo.mintick ? (close - regMid) / residualStdev : 0.0
+zText = str.tostring(chartZ, "#.00") + " / " + str.tostring(fourHourZ, "#.00")
+locationState = close > regMid and close > vwapValue ? "Above Value" : close < regMid and close < vwapValue ? "Below Value" : "In Value"
+volState = fourHourVolumeParticipation ? (fourHourBullCandle ? "Bull Vol" : fourHourBearCandle ? "Bear Vol" : "Active Vol") : "Normal Vol"
+
+signalCount = 0
+signalCount += activeBias == "Bullish" or activeBias == "Bearish" ? 1 : 0
+signalCount += softBuyPressure or softSellPressure ? 1 : 0
+signalCount += fourHourQuantileSlopeUp or fourHourQuantileSlopeDown ? 1 : 0
+signalCount += close > vwapValue or close < vwapValue ? 1 : 0
+signalCount += fourHourVolumeParticipation ? 1 : 0
+signalCount += buyReady or sellReady ? 1 : 0
+
+sigText = activeSide != "" ? activeSide : "Scanning"
+wrText = "--"
+
+// Plots
+plot(showVWAP ? vwapValue : na, "VWAP", color=color.rgb(241, 198, 67), linewidth=2)
+plot(showEMAs ? ema200 : na, "200 EMA", color=color.rgb(0, 145, 145), linewidth=3)
+plot(showEMAs ? ema50 : na, "50 EMA", color=color.rgb(255, 70, 130), linewidth=2)
+plot(showQuantile ? regMid : na, "Quantile Centerline", color=color.rgb(0, 220, 255), linewidth=2)
+plot(showQuantile ? quantileUpper : na, "Quantile Upper", color=color.rgb(0, 200, 170), linewidth=2)
+plot(showQuantile ? quantileLower : na, "Quantile Lower", color=color.rgb(0, 200, 170), linewidth=2)
+
+plot(showEntryStop and activeSide != "" ? activeEntry : na, "Entry", color=color.rgb(52, 110, 255), linewidth=3, style=plot.style_linebr)
+plot(showEntryStop and activeSide != "" ? activeStop : na, "Stop", color=color.rgb(228, 88, 88), linewidth=2, style=plot.style_linebr)
+
+// Labels + dashboard
+var label biasLabel = na
+var label entryLabel = na
+var label stopLabel = na
+var label targetsLabel = na
+var table dashboard = table.new(position.top_right, 2, 8, frame_color=color.new(color.white, 80), frame_width=1, border_width=1)
+
+if barstate.islast
+    if not na(biasLabel)
+        label.delete(biasLabel)
+    if not na(entryLabel)
+        label.delete(entryLabel)
+    if not na(stopLabel)
+        label.delete(stopLabel)
+    if not na(targetsLabel)
+        label.delete(targetsLabel)
+
+    if showBiasLabel
+        biasLabel := label.new(
+             bar_index + biasLabelOffsetBars,
+             close,
+             "Bias " + activeBias,
+             xloc=xloc.bar_index,
+             style=label.style_label_left,
+             textcolor=color.white,
+             color=color.new(biasColor, 35),
+             size=size.small)
+
+    if showSetupLabels and activeSide != ""
+        entryLabel := label.new(bar_index, activeEntry, activeSide + " | Entry " + str.tostring(activeEntry, format.mintick), style=label.style_label_left, textcolor=color.white, color=str.contains(activeSide, "BUY") ? color.rgb(47, 112, 255) : color.rgb(204, 73, 73))
+        stopLabel := label.new(bar_index, activeStop, "Stop " + str.tostring(activeStop, format.mintick), style=label.style_label_left, textcolor=color.white, color=color.rgb(228, 88, 88))
+        targetsText = "TP1 " + str.tostring(activeTp1, format.mintick) + " | TP2 " + str.tostring(activeTp2, format.mintick) + " | TP3 " + str.tostring(activeTp3, format.mintick)
+        targetsLabel := label.new(bar_index, close, targetsText, style=label.style_label_upper_left, textcolor=color.white, color=color.rgb(34, 110, 90))
+
+    if showDashboard
+        table.cell(dashboard, 0, 0, "Sig", text_color=color.white, bgcolor=color.rgb(30, 30, 30), text_size=size.small)
+        table.cell(dashboard, 1, 0, sigText, text_color=color.white, bgcolor=str.contains(sigText, "BUY") ? color.rgb(47, 112, 255) : str.contains(sigText, "SELL") ? color.rgb(204, 73, 73) : color.rgb(70, 70, 70), text_size=size.small)
+
+        table.cell(dashboard, 0, 1, "Conf", text_color=color.white, bgcolor=color.rgb(30, 30, 30), text_size=size.small)
+        table.cell(dashboard, 1, 1, str.tostring(confidencePct) + "%", text_color=color.white, bgcolor=color.rgb(45, 45, 45), text_size=size.small)
+
+        table.cell(dashboard, 0, 2, "Vol", text_color=color.white, bgcolor=color.rgb(30, 30, 30), text_size=size.small)
+        table.cell(dashboard, 1, 2, volState, text_color=color.white, bgcolor=color.rgb(45, 45, 45), text_size=size.small)
+
+        table.cell(dashboard, 0, 3, "Z", text_color=color.white, bgcolor=color.rgb(30, 30, 30), text_size=size.small)
+        table.cell(dashboard, 1, 3, zText, text_color=color.white, bgcolor=color.rgb(45, 45, 45), text_size=size.small)
+
+        table.cell(dashboard, 0, 4, "Daily", text_color=color.white, bgcolor=color.rgb(30, 30, 30), text_size=size.small)
+        table.cell(dashboard, 1, 4, macroBias, text_color=color.white, bgcolor=color.rgb(45, 45, 45), text_size=size.small)
+
+        table.cell(dashboard, 0, 5, "Loc", text_color=color.white, bgcolor=color.rgb(30, 30, 30), text_size=size.small)
+        table.cell(dashboard, 1, 5, locationState, text_color=color.white, bgcolor=color.rgb(45, 45, 45), text_size=size.small)
+
+        table.cell(dashboard, 0, 6, "Sigs", text_color=color.white, bgcolor=color.rgb(30, 30, 30), text_size=size.small)
+        table.cell(dashboard, 1, 6, str.tostring(signalCount) + "/6", text_color=color.white, bgcolor=color.rgb(45, 45, 45), text_size=size.small)
+
+        table.cell(dashboard, 0, 7, "WR", text_color=color.white, bgcolor=color.rgb(30, 30, 30), text_size=size.small)
+        table.cell(dashboard, 1, 7, wrText, text_color=color.white, bgcolor=color.rgb(45, 45, 45), text_size=size.small)
+    else
+        table.clear(dashboard, 0, 0, 1, 7)
+
+alertcondition(earlyBull, "BUY Early Trigger", "ES Main Flow Bias Map: BUY early trigger active.")
+alertcondition(earlyBear, "SELL Early Trigger", "ES Main Flow Bias Map: SELL early trigger active.")
+alertcondition(aPlusBull, "BUY A+ Setup", "ES Main Flow Bias Map: BUY A+ setup active.")
+alertcondition(aPlusBear, "SELL A+ Setup", "ES Main Flow Bias Map: SELL A+ setup active.")
+alertcondition(standAside, "Stand Aside", "ES Main Flow Bias Map: stand aside.")
