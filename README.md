@@ -1,130 +1,119 @@
 # Multi-Timeframe Futures Signal Model
 
-A custom TradingView indicator project built to study market bias, structure, and execution across ES and NQ futures using a rule-based, multi-timeframe framework.
+A rule-based market analysis project built in Pine Script to study directional bias, structure, and execution quality across ES and NQ futures.
 
-## Project Overview
+## Overview
 
-This project is a custom market analysis and execution model built in Pine Script for TradingView. It was designed to improve trading discipline by combining higher-timeframe directional bias, lower-timeframe setup logic, volume context, price location, and structured signal scoring into one repeatable framework.
+This repository contains a custom TradingView indicator framework designed to support structured, multi-timeframe market analysis rather than purely discretionary execution. The project combines higher-timeframe bias, price location, volume context, EMA structure, and quantile-style regression logic into a single workflow for analyzing index futures.
 
-The objective is not to predict every market move, but to create a cleaner process for understanding market conditions, aligning with directional structure, and executing with more consistency.
+The broader goal of the project is to build a repeatable decision framework that reduces emotional execution, improves context awareness, and creates a clearer process for aligning bias, setup, and trade timing.
 
-## What The Indicator Does
+## Research Objective
 
-The model helps analyze:
+The central research question behind this project is:
 
-- Higher-timeframe market bias
-- Directional strength and weakness
-- Volume participation
-- Price location relative to value
-- Trend structure using EMA and quant-style bands
-- Lower-timeframe entry conditions
-- Signal quality through internal scoring
+> How can higher-timeframe structure, lower-timeframe confirmation, and rule-based signal scoring be combined into a more disciplined intraday futures execution model?
 
-It is currently used to study and compare:
+The project is intentionally iterative. It is not presented as a finished "black box" strategy. Instead, it is a signal-design and model-refinement project built around observing market behavior, identifying failure modes, and revising the logic over time.
+
+## Instruments Covered
 
 - ES / MES
 - NQ / MNQ
 
-## Core Framework
+## Timeframe Framework
 
-The indicator follows a top-down process:
+The model uses a top-down workflow:
 
-- **4H chart** for directional bias and market narrative
-- **15m chart** for setup development and confirmation
-- **5m chart** for execution timing
+- **4H** for directional bias and market narrative
+- **15m** for setup development and confirmation
+- **5m** for execution timing
 
-This structure helps reduce random entries by requiring lower-timeframe trades to align with higher-timeframe context.
+This structure is meant to prevent lower-timeframe trades from being taken without higher-timeframe context.
 
-## Main Components
+## Model Components
 
-The signal model uses a combination of:
+The framework combines the following elements:
 
 - **200 EMA** for long-term structural trend
-- **50 EMA** for intermediate trend direction
-- **VWAP** for fair-value and location context
-- **Quantile-style regression bands** for stretch and trend envelope
-- **Volume state analysis** for participation and pressure
-- **Signal scoring logic** for setup strength
-- **Session-based context** for intraday behavior
+- **50 EMA** for intermediate directional trend
+- **VWAP** for intraday value and price-location context
+- **Quantile-style regression bands** for stretch, trend envelope, and mean reversion context
+- **Volume-state logic** for participation and pressure
+- **Signal scoring** for setup alignment
+- **Session-aware context** for intraday market behavior
 
 ## Dashboard Definitions
 
-The indicator includes a compact dashboard with the following fields:
+The indicator uses a compact dashboard with these fields:
 
 - **Sig**: current signal state such as `Scanning`, `BUY EARLY`, `BUY A+`, `SELL EARLY`, or `SELL A+`
-- **Conf**: confidence score based on internal alignment
+- **Conf**: confidence score derived from internal alignment
 - **Vol**: volume condition such as `Bull Vol`, `Bear Vol`, or `Normal Vol`
 - **Z**: relative stretch from the model mean / structure
-- **Daily**: higher-timeframe directional context
-- **Loc**: price location relative to value or structure
+- **Daily**: higher-timeframe directional state
+- **Loc**: price location relative to value / structure
 - **Sigs**: number of aligned internal conditions
-- **WR**: placeholder for future win-rate tracking
+- **WR**: reserved placeholder for future tracked signal win-rate metrics
 
-## Project Purpose
+## Workflow
 
-This project was built to strengthen structured market analysis and remove more emotion from execution. Instead of relying only on discretionary reads, the system is designed to support decision-making through repeatable rules, multi-timeframe alignment, and ongoing observation.
+Typical use of the model follows this process:
 
-The long-term goal is to keep refining the model through chart review, signal tracking, and comparative analysis between ES and NQ.
-
-## Research Focus
-
-This is an active research and iteration project. The main areas of development have included:
-
-- improving higher-timeframe bias flips
-- reducing late entries
-- making take-profit targets more realistic
-- simplifying chart visuals
-- improving dashboard readability
-- comparing ES and NQ signal behavior
-- adjusting thresholds so ES and NQ can be studied side by side more effectively
-
-## Current Workflow
-
-The indicator is mainly used with this workflow:
-
-1. Determine directional bias on the 4H chart
-2. Watch the 15m chart for setup alignment
+1. Determine directional context on the 4H chart
+2. Watch the 15m chart for structure and setup alignment
 3. Use the 5m chart for execution timing
-4. Avoid low-confidence or weak-alignment conditions
-5. Review signal behavior and refine the model over time
+4. Avoid low-confidence, weak-location, or low-alignment conditions
+5. Review post-session signal quality and revise the model where needed
 
-## Fast Interpretation Guide
+## Interpretation Guide
 
 - **4H = Bias**
 - **15m = Setup**
 - **5m = Entry**
 
-Best long conditions:
+Higher-quality long conditions typically include:
 
 - `BUY A+`
 - confidence above 70%
-- above value
-- bullish volume context
-- strong signal count alignment
+- above-value location
+- supportive bullish volume context
+- strong internal signal alignment
 
-Best short conditions:
+Higher-quality short conditions typically include:
 
 - `SELL A+`
 - confidence above 70%
-- below value
-- bearish volume context
-- strong signal count alignment
+- below-value location
+- supportive bearish volume context
+- strong internal signal alignment
 
-Avoid conditions such as:
+Conditions generally avoided include:
 
-- weak or conflicting bias
-- low signal count
+- conflicting higher-timeframe bias
+- weak signal count
 - unclear price location
 - low-confidence setups
-- chasing extended price moves
+- chasing extended price away from structure
 
-## Example Questions This Project Tries To Solve
+## Repository Structure
 
-- When should higher-timeframe bias remain active, and when should it flip?
-- How should ES thresholds differ from NQ thresholds?
-- What makes a setup early versus late?
-- Which filters should block trades completely, and which should only reduce confidence?
-- How can structure and probability be combined into a more disciplined execution model?
+```text
+.
+├── README.md
+├── indicator/
+│   ├── es_main_flow_bias_map_v3.pine
+│   └── nq_main_flow_bias_map_v3.pine
+├── docs/
+│   └── signal-definitions.md
+├── research/
+│   ├── methodology.md
+│   └── revision-log.md
+├── results/
+│   └── weekly-review-template.md
+└── examples/
+    └── README.md
+```
 
 ## Why This Project Matters
 
@@ -134,31 +123,44 @@ This project reflects an interest in:
 - signal design
 - multi-timeframe structure
 - systematic refinement
-- quantitative thinking applied to discretionary execution
+- quantitative reasoning applied to market behavior
+- turning observed chart behavior into testable model revisions
 
-It is being developed as both a practical tool and a research project to better understand market behavior through structured observation and iteration.
+For internship and portfolio purposes, the project is meant to demonstrate independent technical work, structured market research, and iterative model improvement.
 
-## Future Improvements
+## Current Development Themes
+
+Current areas of focus include:
+
+- improving higher-timeframe bias flips
+- reducing late entries
+- aligning ES and NQ logic for cross-instrument comparison
+- making targets more realistic for intraday behavior
+- improving dashboard readability
+- refining confidence and signal-compilation logic
+
+## Limitations
+
+This project is still under active iteration. Current limitations include:
+
+- signal quality has not yet been benchmarked with a complete tracked dataset
+- some thresholds remain instrument-specific and require further testing
+- ES and NQ do not always respond well to identical sensitivity settings
+- the current `WR` field is a placeholder, not a validated historical performance metric
+
+These limitations are important because they define the next phase of research rather than being hidden weaknesses.
+
+## Future Work
 
 Planned next steps include:
 
 - formal signal journaling
-- performance review by setup type
+- setup-type performance review
 - ES vs NQ comparative analysis
-- better tracking of false bias flips
-- clearer win-rate and signal outcome measurement
-- continued refinement of confidence and signal-compilation logic
-
-## Repository Contents
-
-This repository will contain:
-
-- Pine Script source files for ES and NQ versions
-- screenshots of chart behavior
-- revision notes and research observations
-- testing ideas and review templates
-- documentation for how the model is interpreted and used
+- false-bias-flip tracking
+- more formal outcome logging and review
+- cleaner documentation of version changes and lessons learned
 
 ## Disclaimer
 
-This project is for educational, research, and portfolio purposes only. It is not financial advice, not a solicitation to trade, and not a guarantee of performance.
+This project is for educational, research, and portfolio purposes only. It is not financial advice, not a solicitation to trade, and not a guarantee of future performance.
